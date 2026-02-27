@@ -17,3 +17,15 @@ Each module section contains:
 
 ---
 
+## audio_decoder
+
+**Notes for dependents:**
+- AudioDecoder::new() supports WAV files only; MP3/FLAC/OGG return UnsupportedFormat errors
+- DecoderError implements std::error::Error and From<std::io::Error>
+- sample_rate() and channels() return the metadata parsed from the file header
+- read_samples() currently returns an error indicating streaming isn't implemented; use decode_all() instead
+- decode_all() is a static method that fully decodes WAV files into Vec<f32>
+- Only 8-bit and 16-bit PCM WAV files are supported (audio_format == 1)
+- All sample values are normalized to [-1.0, 1.0] range
+- Multi-channel audio is downmixed by averaging channels
+
