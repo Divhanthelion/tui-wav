@@ -332,53 +332,55 @@ pub mod fft_processor {
         buffer: Vec<Complex32>,
     }
 
-    /// Creates a new FFT processor with given window size and sample rate.
-    pub fn new(window_size: usize, sample_rate: u32) -> Self {
-        let mut planner = FftPlanner::<f32>::new();
-        let fft = planner.plan_fft_forward(window_size);
+    impl FftProcessor {
+        /// Creates a new FFT processor with given window size and sample rate.
+        pub fn new(window_size: usize, sample_rate: u32) -> Self {
+            let mut planner = FftPlanner::<f32>::new();
+            let fft = planner.plan_fft_forward(window_size);
 
-        Self {
-            window_size,
-            sample_rate,
-            planner: Arc::new(planner),
-            fft,
-            buffer: vec![Complex32::new(0.0, 0.0); window_size],
-        }
-    }
-
-    /// Processes a batch of samples and returns magnitude spectrum (normalized 0.0–1.0).
-    pub fn process_samples(&mut self, samples: &[f32]) -> Vec<f32> {
-        // Ensure we have enough samples for the window
-        let effective_samples = samples.len().min(self.window_size);
-
-        // Copy and convert to Complex32
-        for (i, &sample) in samples.iter().enumerate().take(effective_samples) {
-            self.buffer[i] = Complex32::new(sample, 0.0);
+            Self {
+                window_size,
+                sample_rate,
+                planner: Arc::new(planner),
+                fft,
+                buffer: vec![Complex32::new(0.0, 0.0); window_size],
+            }
         }
 
-        // Zero-pad remaining buffer if needed
-        for i in effective_samples..self.window_size {
-            self.buffer[i] = Complex32::new(0.0, 0.0);
+        /// Processes a batch of samples and returns magnitude spectrum (normalized 0.0–1.0).
+        pub fn process_samples(&mut self, samples: &[f32]) -> Vec<f32> {
+            // Ensure we have enough samples for the window
+            let effective_samples = samples.len().min(self.window_size);
+
+            // Copy and convert to Complex32
+            for (i, &sample) in samples.iter().enumerate().take(effective_samples) {
+                self.buffer[i] = Complex32::new(sample, 0.0);
+            }
+
+            // Zero-pad remaining buffer if needed
+            for i in effective_samples..self.window_size {
+                self.buffer[i] = Complex32::new(0.0, 0.0);
+            }
+
+            // Perform FFT
+            self.fft.process(&mut self.buffer);
+
+            // Compute magnitudes for first half (Nyquist limit)
+            let num_bins = self.window_size / 2;
+            let mut magnitudes = Vec::with_capacity(num_bins);
+
+            // Compute normalization factor: 1/sqrt(N) for energy preservation
+            let norm_factor = 1.0 / (self.window_size as f32).sqrt();
+
+            for i in 0..num_bins {
+                let magnitude = self.buffer[i].norm() * norm_factor;
+                // Clamp to [0.0, 1.0] range for visualization
+                let clamped = magnitude.min(1.0).max(0.0);
+                magnitudes.push(clamped);
+            }
+
+            magnitudes
         }
-
-        // Perform FFT
-        self.fft.process(&mut self.buffer);
-
-        // Compute magnitudes for first half (Nyquist limit)
-        let num_bins = self.window_size / 2;
-        let mut magnitudes = Vec::with_capacity(num_bins);
-
-        // Compute normalization factor: 1/sqrt(N) for energy preservation
-        let norm_factor = 1.0 / (self.window_size as f32).sqrt();
-
-        for i in 0..num_bins {
-            let magnitude = self.buffer[i].norm() * norm_factor;
-            // Clamp to [0.0, 1.0] range for visualization
-            let clamped = magnitude.min(1.0).max(0.0);
-            magnitudes.push(clamped);
-        }
-
-        magnitudes
     }
 
     /// Represents computed spectrum data with magnitudes and corresponding frequencies.
