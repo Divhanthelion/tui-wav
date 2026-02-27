@@ -405,7 +405,8 @@ pub mod fft_processor {
 }
 
 pub mod audio_player {
-    use std::sync::{Arc, Mutex, AtomicUsize, atomic::Ordering};
+    use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicUsize, Ordering};
     use std::thread;
     use std::time::Duration;
 
