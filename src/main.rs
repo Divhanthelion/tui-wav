@@ -771,8 +771,72 @@ pub mod ui {
 }
 
 pub mod main {
-    //! Entry point: parses CLI args, wires modules together, runs application
-    todo!()
+    use std::error::Error;
+    use std::path::PathBuf;
+    use std::process;
+
+    use crate::audio_decoder::{AudioDecoder, DecoderError};
+    use crate::audio_player::{AudioPlayer, PlayerError};
+    use crate::fft_processor::{FftProcessor, SpectrumData};
+    use crate::ui::{UiManager, UiEvent};
+
+    const FFT_WINDOW_SIZE: usize = 1024;
+
+    /// Main entry point: loads audio, starts player, runs UI loop.
+    pub fn main() -> Result<(), Box<dyn Error>> {
+        let args: Vec<String> = std::env::args().collect();
+
+        if args.len() < 2 {
+            eprintln!("Usage: {} <audio_file>", args[0]);
+            process::exit(1);
+        }
+
+        let path = PathBuf::from(&args[1]);
+
+        // Decode audio file
+        let (samples, sample_rate, channels) = match AudioDecoder::decode_all(&path) {
+            Ok((samples, sr, ch)) => (samples, sr, ch),
+            Err(e) => {
+                eprintln!("Failed to decode audio file: {}", e);
+                process::exit(1);
+            }
+        };
+
+        if samples.is_empty() {
+            eprintln!("No audio samples found in file");
+            process::exit(1);
+        }
+
+        // Initialize FFT processor
+        let fft_processor = FftProcessor::new(FFT_WINDOW_SIZE, sample_rate);
+
+        // Initialize audio decoder for playback
+        let decoder = AudioDecoder::new(&path)?;
+
+        // Create audio player
+        let mut audio_player = AudioPlayer::new(decoder, fft_processor);
+
+        // Start playback thread
+        match audio_player.start() {
+            Ok(()) => {},
+            Err(e) => {
+                eprintln!("Failed to start audio player: {}", e);
+                process::exit(1);
+            }
+        }
+
+        // Get shared state for UI
+        let audio_state = audio_player.get_state();
+
+        // Initialize UI manager
+        let mut ui_manager = UiManager::new(audio_state);
+        ui_manager.attach_audio_player(Arc::new(Mutex::new(audio_player)));
+
+        // Run UI loop
+        ui_manager.run()?;
+
+        Ok(())
+    }
 }
 
 pub mod ui_components {
