@@ -403,8 +403,206 @@ pub mod fft_processor {
 }
 
 pub mod audio_player {
-    //! Manages background audio playback using a producer-consumer model with shared state and synchronization
-    todo!()
+    use std::sync::{Arc, Mutex, AtomicUsize, atomic::Ordering};
+    use std::thread;
+    use std::time::Duration;
+
+    use crate::audio_decoder::{AudioDecoder, DecoderError};
+    use crate::fft_processor::{FftProcessor, SpectrumData};
+
+    /// Error type for audio player operations
+    #[derive(Debug)]
+    pub enum PlayerError {
+        Io(String),
+        DecodeFailed(String),
+        ThreadSpawnFailed(String),
+    }
+
+    impl std::fmt::Display for PlayerError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                PlayerError::Io(msg) => write!(f, "I/O error: {}", msg),
+                PlayerError::DecodeFailed(msg) => write!(f, "Decode failed: {}", msg),
+                PlayerError::ThreadSpawnFailed(msg) => write!(f, "Thread spawn failed: {}", msg),
+            }
+        }
+    }
+
+    impl std::error::Error for PlayerError {}
+
+    /// Handles audio playback in a background thread and feeds FFT processor.
+    pub struct AudioPlayer {
+        decoder: Arc<Mutex<AudioDecoder>>,
+        fft_processor: Arc<Mutex<FftProcessor>>,
+        samples: Vec<f32>,
+        sample_rate: u32,
+        channels: u16,
+        total_samples: usize,
+        current_position: Arc<AtomicUsize>,
+        is_paused: Arc<AtomicBool>,
+        stop_flag: Arc<AtomicBool>,
+        thread_handle: Option<thread::JoinHandle<()>>,
+    }
+
+    impl AudioPlayer {
+        /// Initializes the player with decoder and FFT processor.
+        pub fn new(decoder: AudioDecoder, fft_processor: FftProcessor) -> Self {
+            let sample_rate = decoder.sample_rate();
+            let channels = decoder.channels();
+            let total_samples = decoder.total_samples;
+
+            AudioPlayer {
+                decoder: Arc::new(Mutex::new(decoder)),
+                fft_processor: Arc::new(Mutex::new(fft_processor)),
+                samples: Vec::new(),
+                sample_rate,
+                channels,
+                total_samples,
+                current_position: Arc::new(AtomicUsize::new(0)),
+                is_paused: Arc::new(AtomicBool::new(false)),
+                stop_flag: Arc::new(AtomicBool::new(false)),
+                thread_handle: None,
+            }
+        }
+
+        /// Starts the audio playback thread.
+        pub fn start(&mut self) -> Result<(), PlayerError> {
+            if self.thread_handle.is_some() {
+                return Err(PlayerError::ThreadSpawnFailed("Playback already started".to_string()));
+            }
+
+            // Pre-decode all samples for sharing with FFT
+            let path = self.decoder.lock().unwrap().reader.get_ref().path();
+            match AudioDecoder::decode_all(path) {
+                Ok((decoded_samples, sr, ch)) => {
+                    self.sample_rate = sr;
+                    self.channels = ch;
+                    self.total_samples = decoded_samples.len();
+                    self.samples = decoded_samples;
+                }
+                Err(e) => {
+                    return Err(match e {
+                        DecoderError::Io(err) => PlayerError::Io(format!("I/O error: {}", err)),
+                        DecoderError::DecodeFailed(msg) => PlayerError::DecodeFailed(msg),
+                        _ => PlayerError::DecodeFailed("Unknown decode error".to_string()),
+                    });
+                }
+            }
+
+            let decoder = Arc::clone(&self.decoder);
+            let fft_processor = Arc::clone(&self.fft_processor);
+            let samples = self.samples.clone();
+            let current_position = Arc::clone(&self.current_position);
+            let is_paused = Arc::clone(&self.is_paused);
+            let stop_flag = Arc::clone(&self.stop_flag);
+
+            self.thread_handle = Some(thread::spawn(move || {
+                let window_size = fft_processor.lock().unwrap().window_size;
+                let mut buffer: Vec<f32> = vec![0.0; window_size];
+
+                // Create a local decoder for playback
+                let path = decoder.lock().unwrap().reader.get_ref().path();
+                let mut local_decoder = match AudioDecoder::new(path) {
+                    Ok(d) => d,
+                    Err(_) => return,
+                };
+
+                let mut position: usize = 0;
+
+                while !stop_flag.load(Ordering::Relaxed) {
+                    if is_paused.load(Ordering::Relaxed) {
+                        thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
+
+                    // Read samples for FFT processing
+                    let read_size = if position + window_size <= samples.len() {
+                        window_size
+                    } else {
+                        samples.len() - position
+                    };
+
+                    if read_size == 0 {
+                        break; // End of file
+                    }
+
+                    // Copy samples from shared buffer for FFT
+                    buffer.copy_from_slice(&samples[position..position + read_size]);
+
+                    // Pad with zeros if needed
+                    for i in read_size..window_size {
+                        buffer[i] = 0.0;
+                    }
+
+                    // Process FFT
+                    let mut processor = fft_processor.lock().unwrap();
+                    let magnitudes = processor.process_samples(&buffer);
+
+                    // Update shared state
+                    current_position.store(position, Ordering::Relaxed);
+
+                    drop(processor); // Release lock before updating state
+
+                    // Update position for next iteration
+                    position += window_size / 2; // Use half-window overlap
+
+                    if position + window_size > samples.len() {
+                        position = samples.len().saturating_sub(window_size);
+                    }
+
+                    // Sleep to simulate playback speed
+                    let duration = Duration::from_millis((window_size as f64 / (self.sample_rate as f64 / 2.0) * 1000.0) as u64);
+                    thread::sleep(duration.min(Duration::from_millis(10)));
+                }
+            }));
+
+            Ok(())
+        }
+
+        /// Stops the playback thread gracefully.
+        pub fn stop(&mut self) {
+            if let Some(handle) = self.thread_handle.take() {
+                self.stop_flag.store(true, Ordering::Relaxed);
+                let _ = handle.join();
+            }
+        }
+
+        /// Returns whether playback is currently paused.
+        pub fn is_paused(&self) -> bool {
+            self.is_paused.load(Ordering::Relaxed)
+        }
+
+        /// Toggles pause/resume state.
+        pub fn toggle_pause(&self) {
+            self.is_paused.fetch_update(
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+                |current| Some(!current),
+            ).ok();
+        }
+
+        /// Thread-safe state shared with UI for rendering.
+        pub struct AudioState { 
+            pub is_paused: bool, 
+            pub current_spectrum: Option<SpectrumData> 
+        }
+
+        /// Returns shared state reference for UI access.
+        pub fn get_state(&self) -> Arc<Mutex<AudioState>> {
+            let state = AudioState {
+                is_paused: self.is_paused.load(Ordering::Relaxed),
+                current_spectrum: None,
+            };
+
+            Arc::new(Mutex::new(state))
+        }
+    }
+
+    impl Drop for AudioPlayer {
+        fn drop(&mut self) {
+            self.stop();
+        }
+    }
 }
 
 pub mod ui {
