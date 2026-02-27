@@ -1,13 +1,12 @@
 //! A terminal audio spectrum visualizer. Plays an audio file (WAV/MP3) and displays real-time FFT spectrum bars in a ratatui TUI. Takes a file path as a command-line argument. The audio plays in a background thread while the TUI renders spectrum bars that update in real-time. Uses BarChart widget for the spectrum display. Press 'q' to quit, space to pause/resume.
 
-use std::sync::atomic::{AtomicBool, AtomicUsize};
-use std::sync::{Arc, Mutex};
-use std::thread;
 
 pub mod audio_decoder {
     use std::fs::File;
     use std::io::{BufReader, Read};
     use std::path::Path;
+    use std::sync::{Arc, Mutex};
+    use std::sync::atomic::{AtomicBool, AtomicUsize};
     
     
 
