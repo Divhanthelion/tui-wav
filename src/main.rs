@@ -4,6 +4,7 @@ pub mod audio_decoder {
     use std::fs::File;
     use std::io::{BufReader, Read};
     use std::path::Path;
+    use std::sync::atomic::{AtomicBool, AtomicUsize};
 
     /// Error type for audio decoding operations
     #[derive(Debug, Clone, PartialEq)]
