@@ -170,7 +170,7 @@ pub mod audio_decoder {
             })
         }
 
-        fn decode_mp3(reader: &mut BufReader<File>) -> Result<Self, DecoderError> {
+        fn decode_mp3(_reader: &mut BufReader<File>) -> Result<Self, DecoderError> {
             // For MP3, we'll use rodio's decoder as a fallback
             // Since we can't depend on external crates in this module, 
             // and the project context mentions rodio, we'll implement a minimal MP3 decoder
@@ -234,7 +234,7 @@ pub mod audio_decoder {
     impl AudioDecoder {
         /// Decodes the entire file into a Vec<f32>
         pub fn decode_all(path: &Path) -> Result<(Vec<f32>, u32, u16), DecoderError> {
-            let decoder = Self::new(path)?;
+            let _decoder = Self::new(path)?;
 
             // For WAV files, we can read all samples
             let mut reader = BufReader::new(File::open(path).map_err(|e| DecoderError::Io(e))?);
@@ -408,7 +408,7 @@ pub mod audio_player {
     use std::time::Duration;
 
     use crate::audio_decoder::{AudioDecoder, DecoderError};
-    use crate::fft_processor::{FftProcessor, SpectrumData};
+    use crate::fft_processor::FftProcessor;
 
     /// Error type for audio player operations
     #[derive(Debug)]
@@ -581,12 +581,6 @@ pub mod audio_player {
             ).ok();
         }
 
-        /// Thread-safe state shared with UI for rendering.
-        pub struct AudioState { 
-            pub is_paused: bool, 
-            pub current_spectrum: Option<SpectrumData> 
-        }
-
         /// Returns shared state reference for UI access.
         pub fn get_state(&self) -> Arc<Mutex<AudioState>> {
             let state = AudioState {
@@ -596,6 +590,12 @@ pub mod audio_player {
 
             Arc::new(Mutex::new(state))
         }
+    }
+
+    /// Thread-safe state shared with UI for rendering.
+    pub struct AudioState { 
+        pub is_paused: bool, 
+        pub current_spectrum: Option<SpectrumData> 
     }
 
     impl Drop for AudioPlayer {
@@ -608,14 +608,14 @@ pub mod audio_player {
 pub mod ui {
     use std::error::Error;
     use std::sync::{Arc, Mutex};
-    use std::thread;
+    
     use std::time::Duration;
 
     use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
     use ratatui::prelude::*;
     use ratatui::widgets::{BarChart, BarGroup, Bar, Block, Borders};
     use crate::audio_player::{AudioPlayer, AudioState};
-    use crate::fft_processor::{FftProcessor, SpectrumData};
+    
 
     /// Manages ratatui TUI rendering and input handling.
     pub struct UiManager {
@@ -775,10 +775,10 @@ pub mod main {
     use std::path::PathBuf;
     use std::process;
 
-    use crate::audio_decoder::{AudioDecoder, DecoderError};
-    use crate::audio_player::{AudioPlayer, PlayerError};
-    use crate::fft_processor::{FftProcessor, SpectrumData};
-    use crate::ui::{UiManager, UiEvent};
+    use crate::audio_decoder::AudioDecoder;
+    use crate::audio_player::AudioPlayer;
+    use crate::fft_processor::FftProcessor;
+    use crate::ui::UiManager;
 
     const FFT_WINDOW_SIZE: usize = 1024;
 
@@ -840,10 +840,10 @@ pub mod main {
 }
 
 pub mod ui_components {
-    use crate::audio_player::{AudioPlayer, AudioState};
+    use crate::audio_player::AudioState;
     use crate::fft_processor::SpectrumData;
     use ratatui::{
-        layout::{Alignment, Constraint, Direction, Layout, Rect},
+        layout::{Alignment, Rect},
         style::{Color, Style, Stylize},
         text::{Span, Text},
         widgets::{Bar, BarChart, BarGroup, Block, Borders, Paragraph},
@@ -869,7 +869,7 @@ pub mod ui_components {
             let bars = if let Some(ref spectrum) = state.current_spectrum {
                 self.build_bars_from_spectrum(spectrum)
             } else {
-                vec![Bar::default().value(0.0).label(Span::raw(" "))];
+                vec![Bar::default().value(0.0).label(Span::raw(" "))]
             };
 
             let chart = BarChart::default()
@@ -963,6 +963,8 @@ pub mod ui_components {
 }
 
 fn main() {
-    println!("Starting application...");
-    todo!("Wire up application entry point")
+    if let Err(e) = crate::main::main() {
+        eprintln!("Error: {}", e);
+        std::process::exit(1);
+    }
 }
