@@ -616,8 +616,126 @@ pub mod main {
 }
 
 pub mod ui_components {
-    //! Renders the spectrum bar chart and status bar using ratatui widgets
-    todo!()
+    use crate::audio_player::{AudioPlayer, AudioState};
+    use crate::fft_processor::SpectrumData;
+    use ratatui::{
+        layout::{Alignment, Constraint, Direction, Layout, Rect},
+        style::{Color, Style, Stylize},
+        text::{Span, Text},
+        widgets::{Bar, BarChart, BarGroup, Block, Borders, Paragraph},
+        Frame,
+    };
+
+    /// Renders a real-time spectrum bar chart from FFT data.
+    pub struct SpectrumBarChart {
+        num_bars: usize,
+    }
+
+    impl SpectrumBarChart {
+        /// Creates a bar chart with fixed number of bars.
+        pub fn new(num_bars: usize) -> Self {
+            Self { num_bars }
+        }
+
+        /// Renders the spectrum bars inside given area.
+        pub fn render(&self, f: &mut Frame<'_, '_, W>, area: Rect, state: &AudioState) 
+        where
+            W: std::io::Write,
+        {
+            let bars = if let Some(ref spectrum) = state.current_spectrum {
+                self.build_bars_from_spectrum(spectrum)
+            } else {
+                vec![Bar::default().value(0.0).label(Span::raw(" "))];
+            };
+
+            let chart = BarChart::default()
+                .data(BarGroup::default().bars(&bars))
+                .bar_width(1)
+                .bar_gap(0)
+                .bar_style(Style::default().fg(Color::Cyan))
+                .value_style(Style::default().fg(Color::Yellow).bold())
+                .block(Block::default().borders(Borders::ALL).title("Spectrum"));
+
+            f.render_widget(chart, area);
+        }
+
+        fn build_bars_from_spectrum(&self, spectrum: &SpectrumData) -> Vec<Bar> {
+            let magnitudes = &spectrum.magnitudes;
+
+            // Downsample to num_bars bars by averaging groups of frequency bins
+            let bin_count = magnitudes.len();
+            if bin_count == 0 || self.num_bars == 0 {
+                return vec![Bar::default().value(0.0).label(Span::raw(" "))];
+            }
+
+            let mut bars = Vec::with_capacity(self.num_bars);
+
+            for i in 0..self.num_bars {
+                let start_idx = (i * bin_count) / self.num_bars;
+                let end_idx = ((i + 1) * bin_count) / self.num_bars;
+
+                let avg = if start_idx < end_idx && end_idx <= magnitudes.len() {
+                    let sum: f32 = magnitudes[start_idx..end_idx].iter().sum();
+                    sum / ((end_idx - start_idx) as f32)
+                } else {
+                    0.0
+                };
+
+                // Normalize to [0, 1] range for display (assuming max magnitude ~1.0)
+                let normalized = avg.min(1.0).max(0.0);
+
+                // Create frequency label (only show every few bars to avoid clutter)
+                let label = if i % 4 == 0 {
+                    // Approximate frequency for this bar
+                    let freq = (i as f32 / self.num_bars as f32) * 20000.0; // up to 20kHz
+                    Span::raw(format!("{:.0}Hz", freq))
+                } else {
+                    Span::raw(" ")
+                };
+
+                bars.push(Bar::default().value(normalized as f64).label(label));
+            }
+
+            bars
+        }
+    }
+
+    /// Renders status line (filename, paused state, controls).
+    pub struct StatusBar {
+        filename: String,
+    }
+
+    impl StatusBar {
+        /// Initializes status bar with filename.
+        pub fn new(filename: String) -> Self {
+            Self { filename }
+        }
+
+        /// Renders status line.
+        pub fn render(&self, f: &mut Frame<'_, '_, W>, area: Rect, is_paused: bool) 
+        where
+            W: std::io::Write,
+        {
+            let status_text = if is_paused {
+                format!("Paused | {}", self.filename)
+            } else {
+                format!("Playing | {}", self.filename)
+            };
+
+            let text = Text::from(vec![
+                Span::raw(status_text),
+                Span::raw(" | "),
+                Span::styled("<SPACE>", Style::default().fg(Color::Yellow).bold()),
+                Span::raw(" to toggle pause"),
+            ]);
+
+            let paragraph = Paragraph::new(text)
+                .alignment(Alignment::Left)
+                .style(Style::default().fg(Color::White).bg(Color::Black));
+
+            f.render_widget(paragraph, area);
+        }
+    }
 }
 
 fn main() {
