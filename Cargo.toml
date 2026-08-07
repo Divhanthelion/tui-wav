@@ -1,13 +1,19 @@
 [package]
-name = "audio-viz"
+name = "tui-wav"
 version = "0.1.0"
 edition = "2021"
+description = "Terminal audio spectrum visualizer — play a file, watch the FFT."
+license = "MIT"
+readme = "README.md"
+keywords = ["audio", "fft", "tui", "visualizer", "ratatui"]
+categories = ["command-line-utilities", "multimedia::audio"]
+
+[[bin]]
+name = "tui-wav"
+path = "src/main.rs"
 
 [dependencies]
-cpal = "0.17"
 crossterm = "0.28"
-num-complex = "0.4"
 ratatui = "0.29"
 rodio = "0.22"
 rustfft = "6.4"
-symphonia = "0.5"
